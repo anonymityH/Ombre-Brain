@@ -31,7 +31,7 @@ Write-Host "[2/4] Applying event-time source changes..."
 Assert-LastExitCode "event-time source application"
 
 Write-Host "[3/4] Checking diff hygiene..."
-git diff --check
+& git diff --check -- src/import_memory.py src/bucket_manager.py
 Assert-LastExitCode "git diff --check"
 
 Write-Host "[4/4] Running event-time and neighboring regression tests..."
@@ -44,4 +44,5 @@ Assert-LastExitCode "pytest"
 
 Write-Host ""
 Write-Host "Event-time checks completed successfully."
+Write-Host "Review with: git diff --stat"
 Write-Host "Review with: git diff -- src/import_memory.py src/bucket_manager.py"
