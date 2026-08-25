@@ -2,6 +2,7 @@
 
 import pytest
 
+from bucket_manager import BucketManager
 from import_memory import ImportEngine
 
 
@@ -86,3 +87,41 @@ async def test_import_bucket_forwards_event_time_without_reusing_created_time(tm
     assert stored["event_time_end"] == "2026-08-20T09:45:00+08:00"
     assert "created" not in stored
     assert "last_active" not in stored
+
+
+@pytest.mark.asyncio
+async def test_bucket_manager_persists_event_time_separately_from_created(test_config):
+    manager = BucketManager(test_config, embedding_engine=None)
+    event_time = "2026-08-20T09:30:00+08:00"
+    event_time_end = "2026-08-20T09:45:00+08:00"
+
+    bucket_id = await manager.create(
+        content="一条带来源时间的历史记忆",
+        imported=True,
+        source_tool="import",
+        event_time=event_time,
+        event_time_end=event_time_end,
+    )
+    bucket = await manager.get(bucket_id)
+    metadata = bucket["metadata"]
+
+    assert metadata["event_time"] == event_time
+    assert metadata["event_time_end"] == event_time_end
+    assert metadata["created"] != event_time
+    assert metadata["last_active"] == metadata["created"]
+
+
+@pytest.mark.asyncio
+async def test_bucket_manager_does_not_invent_event_time_when_source_has_none(test_config):
+    manager = BucketManager(test_config, embedding_engine=None)
+
+    bucket_id = await manager.create(
+        content="一条没有来源时间的历史记忆",
+        imported=True,
+        source_tool="import",
+    )
+    bucket = await manager.get(bucket_id)
+    metadata = bucket["metadata"]
+
+    assert "event_time" not in metadata
+    assert "event_time_end" not in metadata
