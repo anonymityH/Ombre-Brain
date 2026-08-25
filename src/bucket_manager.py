@@ -456,6 +456,8 @@ _METADATA_TEXT_LIMITS = {
     "grow_batch_id": _GROW_BATCH_ID_MAX,
     "last_merged_by": _SOURCE_TOOL_MAX,
     "_pre_anchor_source_tool": _SOURCE_TOOL_MAX,
+    "event_time": 64,
+    "event_time_end": 64,
 }
 
 # --- _time_ripple：时间涾漪 ---
@@ -1459,6 +1461,8 @@ class BucketManager:
         test_data: bool = False,
         defer_derived_index: bool = False,
         imported: bool = False,
+        event_time: str = "",
+        event_time_end: str = "",
         source_refs: Any = None,
         quotes: Any = None,
         event_actor: str = "system",
@@ -1586,6 +1590,15 @@ class BucketManager:
             metadata["quotes"] = self._sanitize_quotes(quotes)
         if imported:
             metadata["imported"] = True
+        for field, value in (
+            ("event_time", event_time),
+            ("event_time_end", event_time_end),
+        ):
+            text_value = self._sanitize_text(str(value or "")).strip()[
+                :_METADATA_TEXT_LIMITS[field]
+            ]
+            if text_value:
+                metadata[field] = text_value
         if test_data:
             metadata["provenance"] = {
                 "kind": "test",
@@ -2655,6 +2668,8 @@ class BucketManager:
                   # _pre_anchor_source_tool 是 anchor 时保存的原始 source_tool，
                   # release 时自动恢复；None 表示删除该字段。
                   "source_tool", "grow_batch_id", "last_merged_by", "_pre_anchor_source_tool",
+                  # 历史事件时间与 OB 自身 created/last_active 分离。
+                  "event_time", "event_time_end",
                   # I 沉淀机制字段（tools/i/core.py 维护，bucket_manager 不生成也不解读）：
                   # i_stage        "candidate" | "promoted"，标一条普通记忆是 I 候选
                   # i_dream_dates  被 dream 见证过的日期列表（按天去重），升级门槛的唯一依据

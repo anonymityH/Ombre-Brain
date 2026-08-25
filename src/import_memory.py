@@ -1260,6 +1260,8 @@ class ImportEngine:
             source_tool="import",
             event_actor="human",
             imported=True,
+            event_time=item.get("event_time", ""),
+            event_time_end=item.get("event_time_end", ""),
         )
 
     async def _process_single_chunk(self, chunk: dict, preserve_raw: bool) -> bool:
@@ -1299,6 +1301,18 @@ class ImportEngine:
 
         if not items:
             return True
+
+        # Keep source chronology separate from the time OB creates the bucket.
+        # Conversation-export timestamps are trusted provenance; if a memory
+        # already carries a more specific event_time, keep it. When the source
+        # has no timestamp, leave the field empty rather than inventing one.
+        source_event_time = str(chunk.get("timestamp_start") or "").strip()
+        source_event_time_end = str(chunk.get("timestamp_end") or "").strip()
+        for item in items:
+            if source_event_time and not item.get("event_time"):
+                item["event_time"] = source_event_time
+            if source_event_time_end and not item.get("event_time_end"):
+                item["event_time_end"] = source_event_time_end
 
         # --- 逐条保存提取出的记忆 ---
         chunk_ok = True
@@ -1450,6 +1464,8 @@ class ImportEngine:
                 "is_pattern": parse_bool(
                     item.get("is_pattern", False), default=False
                 ),
+                "event_time": str(item.get("event_time") or "").strip(),
+                "event_time_end": str(item.get("event_time_end") or "").strip(),
             })
 
         if truncated:
