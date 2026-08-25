@@ -5,7 +5,9 @@ but cannot apply a small textual patch. Rewriting bucket_manager.py wholesale
 would be much riskier than a guarded local transformation.
 
 The script is intentionally fail-closed: every expected source fragment must
-match exactly once in the 3.2.0 source before *any* file is written.
+match exactly once in the 3.2.0 source before any file is written. Re-running
+it after a successful application is also safe: if the replacement is already
+present exactly once, that transformation is treated as a no-op.
 It also preserves each source file's original newline convention so Windows
 checkouts do not turn a tiny feature diff into a whole-file CRLF/LF rewrite.
 """
@@ -19,13 +21,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _replace_once(text: str, old: str, new: str, label: str) -> str:
-    count = text.count(old)
-    if count != 1:
-        raise RuntimeError(
-            f"{label}: expected exactly one source match, found {count}; "
-            "no files were changed"
-        )
-    return text.replace(old, new, 1)
+    old_count = text.count(old)
+    if old_count == 1:
+        return text.replace(old, new, 1)
+
+    new_count = text.count(new)
+    if old_count == 0 and new_count == 1:
+        return text
+
+    raise RuntimeError(
+        f"{label}: expected one old source match or one already-applied "
+        f"replacement, found old={old_count}, new={new_count}; "
+        "no files were changed"
+    )
 
 
 def _transform_import_memory(text: str) -> str:
@@ -106,14 +114,20 @@ def main() -> None:
     # Transform everything in memory first. A version/context mismatch aborts
     # before either source file is touched.
     transformed: dict[Path, tuple[str, str]] = {}
+    changed = False
     for path, transform in paths.items():
         original, newline = _read_normalized(path)
-        transformed[path] = (transform(original), newline)
+        updated = transform(original)
+        transformed[path] = (updated, newline)
+        changed = changed or updated != original
 
-    for path, (content, newline) in transformed.items():
-        path.write_bytes(_encode_with_newline(content, newline))
+    if changed:
+        for path, (content, newline) in transformed.items():
+            path.write_bytes(_encode_with_newline(content, newline))
+        print("event-time source changes applied successfully")
+    else:
+        print("event-time source changes already applied; no source files changed")
 
-    print("event-time source changes applied successfully")
     print("next: run pytest tests/test_import_event_time.py tests/test_import_extraction_json.py")
 
 
