@@ -31,7 +31,11 @@ Write-Host "[2/4] Applying event-time source changes..."
 Assert-LastExitCode "event-time source application"
 
 Write-Host "[3/4] Checking diff hygiene..."
-& git diff --check -- src/import_memory.py src/bucket_manager.py
+# Windows checkouts may legitimately use CRLF for Python files. Tell Git that
+# CR at end-of-line is part of the line terminator, while keeping the normal
+# checks for trailing spaces, blank-at-EOF, and space-before-tab.
+& git -c 'core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol' `
+    diff --check -- src/import_memory.py src/bucket_manager.py
 Assert-LastExitCode "git diff --check"
 
 Write-Host "[4/4] Running event-time and neighboring regression tests..."
