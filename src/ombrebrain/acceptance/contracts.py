@@ -19,6 +19,7 @@ class LegacyCompatibilityContract:
                 "breath",
                 "hold",
                 "grow",
+                "source_read",
                 "dream",
                 "trace",
                 "anchor",

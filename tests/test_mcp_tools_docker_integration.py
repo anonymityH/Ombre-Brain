@@ -30,6 +30,7 @@ EXPECTED_TOOLS = {
     "breath_advanced",
     "hold",
     "grow",
+    "source_read",
     "trace",
     "anchor",
     "release",
@@ -45,6 +46,7 @@ EXPECTED_TOOL_ORDER = (
     "breath_advanced",
     "hold",
     "grow",
+    "source_read",
     "trace",
     "dream",
     "anchor",
@@ -92,6 +94,15 @@ EXPECTED_TOOL_PROPERTIES = {
     },
     # grow 的 quotes 在 items 的元素里，不是顶层参数——digest 路径不该有引语。
     "grow": {"content", "items", "test_data"},
+    "source_read": {
+        "bucket_id",
+        "expected_title",
+        "scope",
+        "cursor",
+        "max_tokens",
+        "source_slots",
+        "all_sources",
+    },
     "trace": {
         "bucket_id",
         "name",
@@ -135,6 +146,7 @@ EXPECTED_TOOL_PROPERTIES = {
 EXPECTED_REQUIRED_PROPERTIES = {
     "breath_search": {"query"},
     "hold": {"content"},
+    "source_read": {"bucket_id", "expected_title"},
     "trace": {"bucket_id"},
     "anchor": {"bucket_id"},
     "release": {"bucket_id"},
@@ -405,6 +417,7 @@ def test_manifest_exposes_exactly_the_documented_main_tools(mcp_client):
         ("breath_advanced", {"catalog": {"not": "a boolean"}}, "catalog"),
         ("hold", {}, "content"),
         ("grow", {"items": {"not": "a list"}}, "items"),
+        ("source_read", {}, "bucket_id"),
         ("trace", {}, "bucket_id"),
         ("anchor", {}, "bucket_id"),
         ("release", {}, "bucket_id"),

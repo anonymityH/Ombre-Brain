@@ -239,8 +239,8 @@ async def test_bucket_without_quotes_is_unaffected(bucket_mgr):
 async def test_quotes_are_not_sent_to_the_vector_index(bucket_mgr, monkeypatch):
     """引语不参与向量索引。
 
-    进了索引就等于「可被检索到」，那离「可查」只剩一步——
-    而可查正是原文层被砍掉的原因。
+    进了索引就会让一句原话脱离其所属记忆被召回。引语只能随已经命中的
+    桶按需返回；原文证据也必须先经过精确 ID + 标题门禁。
     """
     seen: list[str] = []
 

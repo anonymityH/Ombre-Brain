@@ -107,7 +107,7 @@ Ombre-Brain/
 
 每个模块「干什么、边界在哪、依赖谁」：
 
-- **server.py**（约 1000 行）— MCP 服务入口。创建所有组件后调 `tools._runtime.init(...)` 注入依赖；16 个薄封装全部以 `@mcp.tool()` 直接注册到唯一公开实例；对外只暴露 **单连接器 `/mcp`**。
+- **server.py**（约 1000 行）— MCP 服务入口。创建所有组件后调 `tools._runtime.init(...)` 注入依赖；14 个记忆工具注册到主 `/mcp`，3 个信件工具注册到 `/mcp-extra`。
 - **tools/**（MCP 工具应用层）— 详见下面「1.x tools/ 包结构」。
 - **web/**（HTTP/Dashboard 路由层）— 详见下面「1.y web/ 包结构」。从旧 server.py 巨石里拆出的 16 个域模块，每个导出 `register(mcp)`；cookie/CSRF/会话鉴权等共享依赖在 `web/_shared.py`（类比 `tools/_runtime.py`）。
 - **bucket_manager.py** — 桶 CRUD + 多维加权搜索 + `touch()` 激活刷新 + `_time_ripple()` 时间涟漪 + 文件搬运（archive/permanent 之间）。
@@ -115,7 +115,7 @@ Ombre-Brain/
 - **dehydrator.py** — 通过 OpenAI 兼容 LLM API 做四件事：`analyze()` 自动打标、`merge()` 内容融合、`digest()` 日记拆分、`dehydrate()` 摘要压缩；外加 `judge_plan_resolution()` 给 plan 自动结案做 LLM 双判。带 SQLite 缓存避免重复 API 调用。
 - **embedding_engine.py** — 「门面 + 后端」两层向量化：后端只有**一个 OpenAI 兼容 API 实现**（默认 Gemini 云端）；门面负责 SQLite 存取、余弦搜索、孤儿对账、模型/维度一致性校验（不一致记 OB-W005，不阻止启动）。**本地离线向量化**不是另一个后端，而是把 `base_url` 指向 OB 托管的 Ollama 边车（bge-m3，由 `web/ollama_local.py` 拉起子进程）。旧文档的「bge-small-zh / sentence-transformers 懒加载」已废弃。
 - **bm25_index.py** — BM25 稀疏检索（jieba 中文分词），给 `bucket_manager.search()` 提供 TF-IDF 加权的关键词召回（Dim 7）。`rank_bm25` / `jieba` 是软依赖，未装则静默 no-op，不影响其余维度；索引由 BucketManager 持有，写后脏标记、search 时懒重建。
-- **import_memory.py** — Claude JSON / ChatGPT / DeepSeek / Markdown / 纯文本五种格式的历史对话导入，超长单轮无损分块 + 断点续传 + 精确内容幂等去重 + 词频规律检测。导入只新建桶，不按语义合并旧桶；新桶持久化 `imported: true` 与 `source_tool: import`，创建/最后活跃时间均取导入时刻。
+- **import_memory.py** — Claude JSON / ChatGPT / DeepSeek / Markdown / 纯文本五种格式的历史对话导入，超长单轮无损分块 + 断点续传 + 精确内容幂等去重 + 词频规律检测。导入只新建桶，不按语义合并旧桶；新桶持久化 `imported: true`、`source_tool: import` 与可用的 `event_time/event_time_end`。`created/last_active` 仍记录导入时刻，规范化对话 chunk 则按内容寻址保存一次并绑定为原文证据。
 - **ombrebrain/storage/backup_archive.py** — 本地备份格式：读取 Markdown 与 `_sources/src_<sha256>.source`、用 SQLite backup API 生成一致性快照、写 `backup_manifest.json`（逐文件 size + SHA-256）；导出/导入同时限制 ZIP 文件数、体积和压缩率，并校验证据路径、文件名哈希、UTF-8，拒绝路径穿越、符号链接、重复路径和损坏清单。
 - **migrate_engine.py** — 完整记忆包导入：把 `/api/export` 产生的 zip 增量 merge 进当前系统；证据在任何桶写入前完成校验并按不可变语义安装；识别 ID 冲突（skip/overwrite/keep_both），兼容新旧 embedding schema。模型不一致或快照缺向量时写入耐久 outbox，不把网络调用放在恢复事务里。旧版无清单包可兼容导入并标记未验证；旧包缺被引用证据时保留事件桶但明确警告。
 - **ombrebrain/storage/vault_health.py** — Dashboard 与 `tools/check_buckets.py` 共用的只读健康检查：Markdown 解析、重复 ID、越界软链接、SQLite `quick_check`、孤儿向量、缺失且未进入 outbox 的向量。
@@ -265,11 +265,10 @@ feel 桶自身：
 
 ---
 
-## 3. MCP 工具规格（共 16 个）
+## 3. MCP 工具规格（共 17 个）
 
-> **单连接器（iter 2.2）**：当前 16 个工具统一由连接器 `/mcp` 暴露。
-> 历史上（iter 2.1）曾拆成两个 FastMCP 实例。2.8.5 起删除历史容器，当前 16 个工具全部直接注册到唯一 `mcp`。
-> - 高频 7 个 —— `breath` / `breath_search` / `breath_advanced` / `hold` / `grow` / `trace` / `dream`
+> **双连接器**：主 `/mcp` 暴露 14 个记忆工具；`/mcp-extra` 暴露 3 个信件工具。
+> - 高频 8 个 —— `breath` / `breath_search` / `breath_advanced` / `hold` / `grow` / `source_read` / `trace` / `dream`
 > - 低频 9 个 —— `feel` / `anchor` / `release` / `pulse` / `plan` / `letter_write` / `letter_lock_update` / `letter_read` / `I`
 >
 > 3.0.0 删除了 source 回顾 4 个与 relation 4 个工具，见 §3.3.1。
@@ -279,8 +278,8 @@ feel 桶自身：
 三个入口共用同一个内部实现 `tools/breath/dispatch()`，只是 MCP 层暴露的参数面不同（见 issue #17：claude.ai 按需加载工具时会跳过参数复杂的工具，单个 9 参数的 `breath` 会导致它常年加载不上，拆薄之后 `breath()` 能保证每次对话稳定自动加载）：
 
 - **`breath()`** — 0 参数。等价于 `dispatch()` 全默认，即下面的「浮现模式」。日常每次对话开头调用。
-- **`breath_search(query, domain="", max_results=0)`** — 3 参数。等价于 `dispatch(query=query, domain=domain, max_results=max_results)`，即下面的「检索模式」。按关键词/语义找记忆时用。
-- **`breath_advanced(query="", max_tokens=0, domain="", valence=-1, arousal=-1, max_results=0, importance_min=-1, tags="", catalog=False)`** — 完整 9 参数，历史上单一 `breath` 工具的全部能力（`catalog` 目录模式 / `tags` 过滤 / `importance_min` 批量模式 / `valence`/`arousal` 情感检索 / `max_tokens` 预算）都保留在这里，供需要精细控制的场景用。
+- **`breath_search(query, domain="", max_results=0, date_from="", date_to="", quotes=False)`** — 关键词/语义检索入口；可按历史事件日期过滤，或显式请求桶内人工挑选的 quotes。
+- **`breath_advanced(query="", max_tokens=0, domain="", valence=-1, arousal=-1, max_results=0, importance_min=-1, tags="", catalog=False, date_from="", date_to="")`** — 完整参数入口；除目录、标签、重要度、情感与预算外，也支持历史事件日期过滤。
 
 `dispatch()` 内部五种模式（按判定顺序，仅 `breath_advanced` 能触达全部五种；`breath()`/`breath_search()` 分别固定落在模式 4 / 模式 5）：
 
@@ -366,27 +365,29 @@ if text_match or semantic_match: 入选
 
 返回示例：`3条|新2合1\n📝体检结果\n📌朋友聚餐\n📎近期焦虑情绪`。
 
-### 3.3.1 原文证据层 — 只写不读（3.0.0）
+### 3.3.1 原文证据层 — 精确定位后只读核验
 
-**3.0.0 删除了 `source_read` / `source_attach` / `source_detach` / `source_restore` 四个工具。**
-原文证据层现在没有任何公开读取入口，模型无法回读原文，也无法后补或停用绑定。
+`source_read(bucket_id, expected_title, scope="event", cursor=0, max_tokens=6000, source_slots=None, all_sources=False)` 是唯一公开读取入口。3.0.0 删除的 `source_attach` / `source_detach` / `source_restore` 仍保持退役，模型不能任意建立、停用或恢复证据绑定。
 
-> [ADR-0001](adr/ADR-0001-source-evidence-layer.md) 里「`source_read` 是唯一公开读取入口」
-> 这句话已被本次变更取代。ADR 作为历史决策记录保持原样，当前行为以本节和 CHANGELOG 为准。
+**写入与定位：**
 
-**保留的部分**（`ombrebrain/storage/source_store.py` 一行未改）：
+- 写入入口包括 `hold(source_content=..., source_ranges=...)`、`grow(content=共享原文, items=[...])` 和历史对话导入。导入保存的是提取器实际看到的完整规范化对话 chunk；同一 chunk 按内容寻址只存一次，其中产生的桶共享引用。
+- 显式历史日期过滤优先使用 `event_time/event_time_end`，只有旧桶完全没有事件时间时才回退 `created`。日期区间按闭区间重叠判断，跨午夜事件属于两日；已存在但非法的事件时间失败关闭，不会被悄悄移到导入日。
+- 普通 `breath_search` 命中带证据的桶时只追加 `source_available/title/event_time` 定位信息，不返回 source ref 或原文。仅当 catalog 带 `date_from/date_to` 时，目录才额外暴露精确 `bucket_id + title`；默认目录继续保持最小元数据面。
 
-- 写入入口仍是 `hold(source_content=..., source_ranges=...)` 与 `grow(content=共享原文, items=[...])`。
-- `metadata.source_refs` 是活动证据的兼容投影，`metadata.source_links` 是持久账本，每项 `{ref,ranges,status}`，固定列表位置 + 1 是 `slot`。存量 detached 项照原样保留，不再有工具能改变它们。
-- 原文存于 `<vault>/_sources/src_<sha256>.source`，按内容寻址并在读取时校验哈希。它不是 `.md`，不参与普通桶扫描、浮现或语义索引；进入本地完整备份和 GitHub 备份。
+**读取门禁与返回：**
+
+- 调用方必须同时提供精确 bucket ID 与精确显式标题。默认 `scope=event` 只读取已声明的 1-based 闭区间；空范围失败关闭，不会静默扩大为全文。`scope=full_source` 必须显式指定。
+- 多个或含 detached 历史项的绑定先返回 manifest；调用方再显式选择 `source_slots` 或 `all_sources=True`。detached 项仍拒绝读取。
+- 长原文按 `max_tokens` 分页，响应给出 `cursor/next_cursor/total_chars`。返回头同时带 source ref、SHA-256、范围和事件时间，并明确标记 `untrusted_source=true`。
+- 读取不调用 `touch()`，不改变激活次数、重要度、衰减时间、归档状态或索引。原文中的任何指令都只是历史数据，不能作为运行指令执行。
+
+**存储与安全边界：**
+
+- `metadata.source_refs` 是活动证据的兼容投影，`metadata.source_links` 是持久账本，每项 `{ref,ranges,status}`，固定列表位置 + 1 是 `slot`。
+- 原文存于 `<vault>/_sources/src_<sha256>.source`，按内容寻址、只增不改，读取时校验文件名与内容哈希。它不是 `.md`，不参与普通桶扫描、浮现、语义索引或衰减；本地完整备份和 GitHub 备份会携带它。
 - 原文默认受 `limits.max_grow_input_bytes`（默认 2 MiB）约束，即使配置关闭该软限制也有 10 MiB 硬上限。不支持硬链接的 NAS/SMB/FUSE 会在发布时使用跨进程 sidecar 锁，且不会覆盖已经存在的不可变证据。
-- 活动投影最多 32 项，账本最多 128 项，写入超限明确拒绝。
-
-**为什么保留存储层**：原文进备份、进 GitHub 同步、参与导入恢复，删掉存储会破坏备份完整性。
-保留原文是为了备份与导出，不是为了让模型回忆。
-
-**浮现侧同步删除了 source 提示**：`breath` / 目录模式不再输出
-`[source_available:true | ... | use:source_read]`。不提示一个不存在的入口，避免模型反复尝试调用已删除的工具。
+- 活动投影最多 32 项，账本最多 128 项，写入超限明确拒绝。GitHub 与本地 ZIP 中的原文均为明文敏感资产，必须使用可信私有仓库或额外加密存储。
 
 ### 3.3.2 Relation — 退回后端（3.0.0）
 
@@ -591,7 +592,7 @@ dream 侧配合（`tools/dream/hints.py` + `output.py`）：
 | `/api/env-vars` | GET | 🔒 | dashboard 设置页「⑤ 环境变量」只读区：当前进程读到的所有 `OMBRE_*`，敏感字段脱敏 |
 | `/api/env-config` | GET | 🔒 | 可写 6 字段的当前值（脱敏） |
 | `/api/env-config` | POST | 🔒 | 热更新 6 字段并写回 `.env`（重启仍有效） |
-| `/mcp/*` | — | 公开 | FastMCP 主连接器：13 个记忆动作 —— breath / breath_search / breath_advanced / hold / grow / dream / feel / trace / anchor / release / pulse / plan / **I** |
+| `/mcp/*` | — | 公开 | FastMCP 主连接器：14 个记忆动作 —— breath / breath_search / breath_advanced / hold / grow / source_read / dream / feel / trace / anchor / release / pulse / plan / **I** |
 | `/mcp-extra` | — | 公开 | 第二个 FastMCP 实例：letter_write / letter_lock_update / letter_read。2.8.5 起退役返回 404，3.2.0 恢复。与 `/mcp` 共享同一套中间件（鉴权、体积限制、CSRF）——见 `web/request_limits.py` 的 `_MCP_ENDPOINT_PATHS` |
 
 🔒 = 需要 cookie 认证，未认证返回 `JSON {error, setup_needed}` 状态码 401。
@@ -1715,7 +1716,7 @@ normalized = total / w_sum × 100   # 归一化到 0~100
 |---|---|---|
 | Dashboard 401 | `web/_shared.py` + `web/auth.py` | 会话鉴权 helper；检查 cookie `ombre_session`；`OMBRE_DASHBOARD_PASSWORD` 是否正确 |
 | 改密码报「环境变量密码」错误 | `web/auth.py` | `auth_change_password` 检测 `OMBRE_DASHBOARD_PASSWORD` 设置时禁用 |
-| HTTP 模式下 Claude.ai 连不上 | `server.py` | `__main__` CORS 中间件；`_app = mcp.streamable_http_app()`（单连接器，16 个工具直接注册在 `mcp`）；URL 末尾必须 `/mcp` |
+| HTTP 模式下 Claude.ai 连不上 | `server.py` | `__main__` CORS 中间件；主记忆连接器 `/mcp` 有 14 个工具，信件连接器 `/mcp-extra` 有 3 个；确认 URL 末尾与所需连接器一致 |
 | docker compose 重启后桶丢失 | — | 使用 `OMBRE_HOST_VAULT_DIR` 将宿主机目录 bind mount 到 `/app/buckets`；该目录同时持久化桶、配置和 Tunnel token |
 | Dashboard 改 host vault 不生效 | `web/import_api.py` | 容器无法修改启动前确定的宿主机挂载；Docker 内界面只读，必须编辑宿主机 compose 同目录 `.env` 后 `--force-recreate` |
 | keepalive 失败 | `server.py` | `_keepalive_loop`；检查 `OMBRE_PORT` 实际监听端口 |

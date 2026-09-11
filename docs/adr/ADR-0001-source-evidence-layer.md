@@ -2,10 +2,11 @@
 
 ## Decision
 
-Ombre Brain 仍只使用普通事件记忆参与日常浮现和语义检索。结构化调用
-`grow(content=共享原文, items=[...])` 时，可以额外把同一份 UTF-8 原文保存一次，
-路径为 `<vault>/_sources/src_<sha256>.source`；事件桶通过经过校验的
-1-based 闭区间 `source_ranges` 引用其中片段。
+Ombre Brain 仍只使用普通事件记忆参与日常浮现和语义检索。`hold(source_content=...)`、
+结构化 `grow(content=共享原文, items=[...])` 与历史对话导入可以额外把 UTF-8 原文
+保存到 `<vault>/_sources/src_<sha256>.source`；事件桶通过经过校验的 1-based 闭区间
+引用其中片段。历史导入保存的是提取器实际看到的完整规范化对话 chunk，而不是原始导出
+文件的字节镜像；同一 chunk 按内容寻址只存一次。
 
 `source_read` 是唯一公开读取入口。调用方必须同时给出一个精确桶 ID 与该桶的精确
 显式标题。默认 `event` 范围在没有非空行区间时失败关闭；读取共享全文必须显式指定

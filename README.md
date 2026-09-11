@@ -31,7 +31,7 @@ Ombre Brain gives it persistent memory — not cold key-value storage, but a sys
 - **Obsidian 原生**：每个记忆桶 = 一个 Markdown 文件 + YAML frontmatter，可直接在 Obsidian 浏览编辑
 - **写入不被向量服务绑架**：Markdown 原文先落盘，embedding 在耐久后台队列中生成；网络、限流或重启都不会让已写记忆回滚
 - **可验证备份与恢复**：本地导出使用 SQLite 一致性快照，并把记忆桶与隐藏原文证据一起写入逐文件 SHA-256 清单；导入前先检查路径、体积、重复项和完整性，损坏包不会部分恢复
-- **历史对话导入**：批量导入 Claude / ChatGPT / DeepSeek 历史对话，超长单轮无损分块并支持断点续传；导入桶独立新建、标注“被导入”，创建与衰减日期取导入日
+- **历史对话导入**：批量导入 Claude / ChatGPT / DeepSeek 历史对话，超长单轮无损分块并支持断点续传；导入桶独立新建、标注“被导入”，同时保留导入时间与对话事件时间，并把规范化对话 chunk 作为可核验原文证据
 - **Dashboard**：内置 Web 管理面板，密码保护，桶列表 / 检索调试 / 记忆网络 / 配置管理
 - **Cloudflare Tunnel 一键管理**：Dashboard 内置 Tunnel 连接器，无需命令行即可开启公网访问
 - **OAuth 2.1 远程鉴权**：通过 HTTPS 连接时自动触发 OAuth 流程，Claude.ai 网页版和 Claude Code 均支持
@@ -54,19 +54,22 @@ Ombre Brain 的使用者是**模型自己**，不是它背后的人。所以这�
 
 ---
 
-## 它的 16 个工具 / The 16 Tools
+## 它的 17 个工具 / The 17 Tools
 
-16 个工具全部在**一个 MCP 连接器 `/mcp`** 上。连上 `/mcp` 即拥有全部能力。
+17 个工具分在两个连接器：`/mcp` 提供 14 个记忆动作，`/mcp-extra` 提供
+3 个信件动作。只使用记忆库时连接 `/mcp` 即可；需要信件时再连接
+`/mcp-extra`。
 
-### 高频 7 个
+### 高频 8 个
 
 | 工具 | 一句话 |
 |---|---|
 | `breath` | 睁眼。**0 参数**，让权重最高、未解决且未标记 digested 的事浮现 + 置顶核心准则；每条正文后附一行简洁 Footprint。digested 只从默认/被动浮现隐藏，仍可按 query 找回。**每次对话第一件事**。故意做成 0 参数：claude.ai 按需加载工具时会跳过参数复杂的工具，塞太多参数会导致它常年加载不上。 |
-| `breath_search` | 按关键词 / 语义找记忆：`query`（必填）/ `domain` / `max_results`。融合关键词/BM25 + 语义检索，向量不可用时自动退回关键词检索。可命中已归档记忆，但只提示足迹与明确恢复调用，不会自动恢复。 |
-| `breath_advanced` | `breath` 的完整参数版：`catalog=True` 目录模式（每桶一行元数据，0 LLM，最省 token；anchor 带 `⚓ [anchor]`）、`tags`、`importance_min`、`valence`/`arousal`、`max_tokens` 等精细控制，日常用不到时用前两个就够。 |
+| `breath_search` | 按关键词 / 语义找记忆：`query`（必填）及可选 `domain` / `max_results` / `date_from` / `date_to`。日期优先按事件发生时间定位，旧桶无事件时间时才回退创建时间。向量不可用时自动退回关键词检索。可命中已归档记忆，但不会自动恢复。 |
+| `breath_advanced` | `breath` 的完整参数版：`catalog=True` 目录模式（每桶一行元数据，0 LLM，最省 token；anchor 带 `⚓ [anchor]`）、日期、`tags`、`importance_min`、`valence`/`arousal`、`max_tokens` 等精细控制。带日期的目录会给出精确 `bucket_id + title`，供后续核验原文。 |
 | `hold` | 记下当下一件事（一句话级）。`title` 可显式指定最终标题并优先于模型建议；打标失败时仍会原样落盘，绝不压缩正文。 |
 | `grow` | 整理一段长内容（日记 / 总结），自动拆成 2~6 条独立桶，并在首次新建时保存逐条生成的 `why_remembered`。结构化 `items` 可逐字写入最终正文、标题和元数据；同时传 `content` 时，它作为共享原文证据保存。 |
+| `source_read` | 在 `breath_search` 或带日期的 catalog 已给出精确 `bucket_id + title` 后，分页回读该记忆绑定的不可变原文证据；默认只读事件范围，校验 SHA-256，且不触发激活或衰减。 |
 | `trace` | 唯一的元数据写入口：resolved / pinned / 改情感坐标 / 替换正文 / 删除到档案 / 改 plan 状态。长正文可用 `old_str/new_str` 做唯一片段的原子局部替换；只传要改的字段。 |
 | `dream` | 做梦消化最近窗口（默认 48h）有变动的记忆。**不是义务**，需要消化时再调。 |
 
@@ -89,9 +92,17 @@ Dashboard 原有的 Letter 编辑继续保留：历史信、无锁信以及当�
 
 ### 原文证据边界
 
-- **原文证据只写不读，没有任何回顾入口。** v3.0.0 起删除了 `source_read` / `source_attach` / `source_detach` / `source_restore`：模型无法回读原文，也无法后补或停用绑定。
-- 写入仍照旧：`hold(source_content=...)` 或结构化 `grow(content=共享原文, items=[...])` 建立原文证据，每个对象条目用 `source_ranges=[[起始行, 结束行], ...]` 声明自己的 1-based 闭区间。原文按 SHA-256 内容寻址存进 `_sources/`，进备份、进 GitHub 同步。
-- 保留原文是为了**备份与导出的完整性**，不是为了让模型回忆。原文永不参与 `breath`、被动联想、语义索引或衰减计分；日常浮现里不会出现任何「这条背后还有原文」的提示。
+- **`source_read` 是唯一公开回读入口。** `source_attach` / `source_detach` /
+  `source_restore` 仍保持退役；模型不能任意建立或改动证据绑定。
+- 写入入口包括 `hold(source_content=...)`、结构化
+  `grow(content=共享原文, items=[...])`，以及历史对话导入。历史导入保存的是
+  提取模型实际看到的完整规范化对话 chunk，同一 chunk 只存一次并由其中产生的记忆共享。
+- `source_read` 必须同时提供精确桶 ID 与显式标题。默认 `scope=event`
+  只返回声明的 1-based 闭区间；空范围失败关闭，读取全文必须显式使用
+  `scope=full_source`。长原文用 `next_cursor` 继续分页。
+- 原文按 SHA-256 内容寻址存进 `_sources/`，进入备份与 GitHub 同步，但永不参与
+  `breath` 正文、被动联想、语义索引或衰减计分。普通检索最多提示
+  `source_available` 及精确 title，不返回 source ref 或原文。
 - 显式标题会规范为单行，最长 120 字符，越界直接拒绝而不静默截断。证据文件按 SHA-256 校验完整性；哈希与备份清单不是数字签名，不能证明备份来源。
 - v2.10.1 起，本地 ZIP 使用 `sources/src_<sha256>.source`，vault 与 GitHub 使用 `_sources/src_<sha256>.source`。v2.10.0 生成的旧备份可能只有引用而没有证据文件；导入仍可恢复事件桶，但会明确提示原文证据缺失。
 - **隐私提醒**：GitHub 同步会把这些原文以可读明文提交到你配置的仓库，本地导出 ZIP 同样不加密；它们通常比整理后的事件正文更完整。请使用可信私有仓库并审计协作者权限，本地 ZIP 应加密保管或放入可信存储。新备份若发现桶引用了缺失证据会直接失败，不会生成“校验通过但证据不全”的包。
@@ -235,11 +246,11 @@ curl http://localhost:18001/health
 }
 ```
 
-重启 Claude Desktop，工具列表里会出现主连接器的 13 个工具：`breath` / `breath_search` / `breath_advanced` / `hold` / `grow` / `trace` / `dream` / `feel` / `anchor` / `release` / `pulse` / `plan` / `I`。
+重启 Claude Desktop，工具列表里会出现主连接器的 14 个工具：`breath` / `breath_search` / `breath_advanced` / `hold` / `grow` / `source_read` / `trace` / `dream` / `feel` / `anchor` / `release` / `pulse` / `plan` / `I`。
 
 信件在**第二个连接器** `/mcp-extra` 上（`letter_write` / `letter_lock_update` / `letter_read`），要用的话在客户端里再加一条连接。写信是一个行为，不是一段记忆——它有收件人、有时间锁，时间方向和记忆相反，放在主连接器里会让模型在该回忆的时候去翻信。
 
-> 16 个工具全在同一连接器 `/mcp` 暴露，只配这一个即可。
+> 日常记忆闭环只需 `/mcp`；需要信件功能时再添加 `/mcp-extra`。
 
 ---
 
@@ -316,16 +327,16 @@ Claude.ai                    Ombre Brain 服务器
 
 #### 步骤 3：连接端点
 
-16 个工具全在**一个 MCP 端点 `/mcp`** 上：
+17 个工具分在两个 MCP 端点上：
 
 | 端点 | 工具 | 说明 |
 |---|---|---|
-| `/mcp` | `breath` `breath_search` `breath_advanced` `hold` `grow` `dream` `feel` `trace` `anchor` `release` `pulse` `plan` `I` | 记忆本身的 13 个动作 |
+| `/mcp` | `breath` `breath_search` `breath_advanced` `hold` `grow` `source_read` `dream` `feel` `trace` `anchor` `release` `pulse` `plan` `I` | 记忆本身的 14 个动作 |
 | `/mcp-extra` | `letter_write` `letter_lock_update` `letter_read` | 信件（3.2.0 起独立，2.8.5–3.1.0 期间该路径退役返回 404）|
 
-> 旧版曾使用第二连接器 `/mcp-extra`，该端点现已退役并返回 `404`；不要再单独添加。全部 16 个工具都在 `/mcp`。
+> `/mcp-extra` 在 2.8.5–3.1.0 期间曾退役；3.2.0 起已恢复，专门承载信件。
 
-在 Claude.ai / 你的客户端里添加这一个连接器即可使用全部工具：
+在 Claude.ai / 你的客户端里先添加主记忆连接器：
 
 ```
 http(s)://<你的地址>:18001/mcp
@@ -859,7 +870,7 @@ docker compose -f deploy/docker-compose.yml up -d
 
 新用户最常踩、但文档里分散各处的点，集中提醒一下：
 
-- **只需加一个连接器 `/mcp`**：16 个工具全在这一个端点上，不用再单独加别的。
+- **记忆与信件是两个连接器**：`/mcp` 是 14 个记忆动作；只有需要写信或读信时才额外连接 `/mcp-extra`。
 - **反代/隧道要整主机名转发**：Cloudflare Tunnel / Nginx 按域名整体转发到 `localhost:端口`，覆盖所有路径即可。
 - **OpenAI 兼容向量化两个坑**：base_url 末尾要带 `/v1`（漏了 404）、model 要带完整前缀（如 `BAAI/bge-m3`，漏了报 Model does not exist）。填完用向量化区的「测试」按钮确认。
 - **改完 key / 配置点「保存」后再「测试」**：压缩和向量化各有独立的「测试」按钮，能用就用，别凭感觉。

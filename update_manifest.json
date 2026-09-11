@@ -42,8 +42,8 @@
     },
     {
       "path": "src/bucket_manager.py",
-      "sha256": "5f0a9cf648b8e83ad75fbbcb31ac89eb287ba6386a3cdfa5bdb84f7302e1d349",
-      "size": 196445
+      "sha256": "ea581432bbe4efa2610e6fb7150e44d5d36196c43eb96c77bd2e7c825c171a80",
+      "size": 197024
     },
     {
       "path": "src/decay_engine.py",
@@ -67,8 +67,8 @@
     },
     {
       "path": "src/errors.py",
-      "sha256": "059bf507d0a12a49009f6d335f3880f2b0e79dfa0bad531f62cfc9591047ddcd",
-      "size": 25028
+      "sha256": "ea22144912bd0c645143e01591ad00a04f6772a0bf6f33b3bb95a06666676e43",
+      "size": 25053
     },
     {
       "path": "src/github_sync.py",
@@ -77,8 +77,8 @@
     },
     {
       "path": "src/import_memory.py",
-      "sha256": "9b37820cef77aa98a4668ed3f1bfc330a361792a007d2802b0e0181cc51c7a80",
-      "size": 60715
+      "sha256": "5bcd0d692f633f8ccc8dfd76aedfa2ee186368dac8099654fe27d8cd09b2cd15",
+      "size": 63741
     },
     {
       "path": "src/migrate_engine.py",
@@ -102,8 +102,8 @@
     },
     {
       "path": "src/ombrebrain/acceptance/contracts.py",
-      "sha256": "4a17276599666b5cde7730bbf79e1b9d83b877c223ed47c4afcefb95bb44d6f4",
-      "size": 5982
+      "sha256": "d5f70d81b30f628fad9a803f8b1dff3e3394407ad78ce88578b03c48d41dc1e5",
+      "size": 6013
     },
     {
       "path": "src/ombrebrain/acceptance/harness.py",
@@ -637,8 +637,8 @@
     },
     {
       "path": "src/ombrebrain/protocol/public_tools.py",
-      "sha256": "62b3d227e9fc1250dcc72c822ce2767ac2259c3c397044aef5ec71dac83f4228",
-      "size": 8791
+      "sha256": "5d41ca4c3b7dfcd5d013e8e793ff53e6092e98e4f5badd67ea777641dbdd47e1",
+      "size": 8806
     },
     {
       "path": "src/ombrebrain/protocol/schemas.py",
@@ -727,8 +727,8 @@
     },
     {
       "path": "src/ombrebrain/storage/quote_store.py",
-      "sha256": "36bf0fd499fb0ccca530d95409db09471a02c463fd4ce9ae84d00d07f47d5dfb",
-      "size": 5789
+      "sha256": "918b4df7b9e04f3c1833dbd92d9e06ea7a73594a65b29235f8f648f3d0414784",
+      "size": 5839
     },
     {
       "path": "src/ombrebrain/storage/relation_store.py",
@@ -762,8 +762,8 @@
     },
     {
       "path": "src/server.py",
-      "sha256": "9bf2d05e062925b3c3bcc177696c347d5b79535d5bc4bfe06d850de6f0d8a123",
-      "size": 66168
+      "sha256": "2a0d551fab5c7dc86a39ef92a9f13a556818635adb60be08200e0582c07b33b7",
+      "size": 67681
     },
     {
       "path": "src/server_app.py",
@@ -802,8 +802,13 @@
     },
     {
       "path": "src/tools/breath/__init__.py",
-      "sha256": "985094655968ae16722f795549f9f82d4ed9fa0360716151d33d2052c18b57b2",
-      "size": 6526
+      "sha256": "0c5f118d7ce184ec3ef2481f407c76699c8ca8ec419739e55c74c1ccc7342b89",
+      "size": 6588
+    },
+    {
+      "path": "src/tools/breath/_chronology.py",
+      "sha256": "ca22d31256d2b24c2b58f1fede304ed8cea6ae976d0e45b615487602219550ab",
+      "size": 3605
     },
     {
       "path": "src/tools/breath/_verbatim.py",
@@ -812,8 +817,8 @@
     },
     {
       "path": "src/tools/breath/catalog.py",
-      "sha256": "7d8bbfd64b9dbbb9fd55570f6304af0a00a008f29b3dcc90a9c1a859280d130d",
-      "size": 5235
+      "sha256": "b666bc158ccb5cf1ce06628a013595d2b024af0a580c4b1f29eb084c2ff0dbee",
+      "size": 6377
     },
     {
       "path": "src/tools/breath/feel.py",
@@ -827,8 +832,8 @@
     },
     {
       "path": "src/tools/breath/search.py",
-      "sha256": "2e96648a77934ace80731c2438526f2f7ef5fd523d18fdc82296367299efca8d",
-      "size": 19615
+      "sha256": "86d35d7ca9ba489f294d7eb5aa5c08721f3fdf134fe77600db59bcf3e62a185f",
+      "size": 19460
     },
     {
       "path": "src/tools/breath/surface.py",
@@ -919,6 +924,16 @@
       "path": "src/tools/plan/core.py",
       "sha256": "11ab18a28ef0a0b76269b19828a20744dc87b73d92698fdf62dbc397ee89a9b8",
       "size": 24648
+    },
+    {
+      "path": "src/tools/source_read/__init__.py",
+      "sha256": "9b1c86833e054f84f0545170817e99cc0a27602e968a18ad0a38d527c45fa5e4",
+      "size": 115
+    },
+    {
+      "path": "src/tools/source_read/core.py",
+      "sha256": "700395152872c01c5d584bf0addf2b853bcf019012671b08e23e8335676df6e8",
+      "size": 9000
     },
     {
       "path": "src/tools/trace/__init__.py",

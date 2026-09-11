@@ -214,7 +214,7 @@ async def test_catalog_still_returns_metadata_without_body(bucket_mgr):
 
 
 @pytest.mark.asyncio
-async def test_breath_never_exposes_source_evidence(
+async def test_breath_exposes_only_source_locator_not_source_evidence(
     bucket_mgr, monkeypatch
 ):
     source_ref = "src_" + "a" * 64
@@ -232,8 +232,10 @@ async def test_breath_never_exposes_source_evidence(
     output = await dispatch(query=bucket_id, max_tokens=10000)
 
     assert body in output
-    # 原文回顾能力已删除：不再提示原文存在，也绝不泄漏 ref
-    assert "source_available" not in output
+    # 回读入口只暴露下一步所需的精确标题，不在普通 breath 里泄漏
+    # source_ref 或原文。真正读取仍必须显式调用 source_read。
+    assert "[source_available:true]" in output
+    assert "[title:京都计划]" in output
     assert source_ref not in output
 
 

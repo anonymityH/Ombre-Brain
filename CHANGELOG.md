@@ -2,6 +2,20 @@
 
 本项目版本号见根目录 `VERSION` 文件，Docker 镜像 tag 与之对应（`p0luz/ombre-brain:<VERSION>`）。
 
+## Unreleased
+
+### 新增 / Added
+
+- **历史导入到原文核验的垂直闭环。** 对话导入桶现在同时保存稳定显式标题、
+  `event_time/event_time_end` 与不可变原文引用；保存的是提取器实际看到的完整规范化
+  对话 chunk，同一 chunk 按内容寻址去重。
+- **恢复只读 `source_read`。** 必须先取得精确 `bucket_id + title`，默认只读事件范围；
+  空范围失败关闭，全文需显式请求，长材料通过 `next_cursor` 分页。读取校验 SHA-256、
+  标记内容为不可信历史资料，且不触发激活、衰减、恢复或索引。
+- **按真实事件时间浏览历史。** `breath_search` 和 `breath_advanced` 的日期过滤优先使用
+  `event_time`，旧桶无事件时间时才回退 `created`；带日期的 catalog 会返回核验所需的
+  精确定位信息，普通浮现仍不会注入原文。
+
 ## 3.2.0
 
 > 施工单三步走完最后两步。3.0.0 只做了第一步（删减 8 个工具）就发布了，

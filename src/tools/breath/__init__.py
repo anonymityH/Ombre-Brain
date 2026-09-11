@@ -129,6 +129,8 @@ async def dispatch(
             domain_filter=domain_filter or None,
             tag_filter=tag_filter,
             max_results=max_results,
+            date_from=date_from,
+            date_to=date_to,
         ))
 
     # --- 解析 tags 过滤；feel/__feel__ 映射到 feel 通道 ---

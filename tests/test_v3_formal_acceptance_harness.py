@@ -10,6 +10,7 @@ def test_default_compatibility_contract_pins_legacy_surfaces() -> None:
         "breath",
         "hold",
         "grow",
+        "source_read",
         "dream",
         "trace",
         "anchor",
@@ -36,7 +37,7 @@ def test_formal_acceptance_harness_accepts_matching_snapshot() -> None:
 
     assert report.ok is True
     assert report.issue_count == 0
-    assert report.to_dict()["contract"]["tool_count"] == 13
+    assert report.to_dict()["contract"]["tool_count"] == 14
     assert report.to_dict()["snapshot"]["dashboard_route_count"] >= 3
 
 

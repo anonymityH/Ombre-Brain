@@ -24,6 +24,7 @@ from ..plan.core import is_letter_bucket, letter_lock_state
 from ombrebrain.storage.relation_store import relation_hint
 from utils import parse_bool
 from errors import safe_error_detail
+from ._chronology import bucket_in_date_range, chronology_label, parse_date_range
 
 # 类型 → (区头, 排序位)。未知类型归入动态区兜底。
 _SECTIONS = [
@@ -39,6 +40,8 @@ async def surface_catalog(
     domain_filter: list[str] | None = None,
     tag_filter: list[str] | None = None,
     max_results: int = 20,
+    date_from: str = "",
+    date_to: str = "",
 ) -> str:
     """返回全部记忆桶的紧凑目录。每桶一行：名称 | 域 | 重要度 | Footprint。"""
     try:
@@ -48,6 +51,16 @@ async def surface_catalog(
 
     if not buckets:
         return "记忆库为空。"
+
+    try:
+        time_from, time_to = parse_date_range(date_from, date_to)
+    except (TypeError, ValueError, OverflowError) as exc:
+        if "date_from 不能晚于 date_to" in str(exc):
+            return "date_from 不能晚于 date_to。"
+        return "日期格式无效，请使用 YYYY-MM-DD 或 ISO 8601 时间。"
+    locator_mode = bool(
+        str(date_from or "").strip() or str(date_to or "").strip()
+    )
 
     try:
         footprint_snapshot = rt.bucket_mgr.footprint_snapshot()
@@ -63,6 +76,8 @@ async def surface_catalog(
     grouped: dict[str, list[tuple[int, str]]] = {key: [] for key, _ in _SECTIONS}
     for b in buckets:
         meta = b.get("metadata", {})
+        if not bucket_in_date_range(b, time_from, time_to):
+            continue
         logical_letter = is_letter_bucket(b)
         letter_locked = (
             logical_letter and letter_lock_state(b, "ai")["locked"]
@@ -100,6 +115,16 @@ async def surface_catalog(
             f"{pin_mark}{anchor_mark}{name} | {','.join(domains) or '未分类'} | {imp} "
             f"| {_footprint(b, meta)}"
         )
+        if locator_mode and not letter_locked:
+            line += f" | [bucket_id:{b['id']}]"
+            title = " ".join(str(meta.get("title") or "").split())
+            if title:
+                line += f" [title:{title}]"
+            if meta.get("source_refs") or meta.get("source_links"):
+                line += " [source_available:true]"
+            time_field, time_value = chronology_label(meta)
+            if time_field and time_value:
+                line += f" [{time_field}:{time_value}]"
         if not letter_locked:
             hint = relation_hint(b)
             if hint:

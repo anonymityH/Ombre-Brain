@@ -23,7 +23,7 @@ Docker/Zeabur 的持久卷统一挂载 `/app/buckets`，配置路径为 `/app/bu
 ## 数据边界
 
 - `buckets/**/*.md` 是事件记忆真源。写入成功以 Markdown 原子落盘为准。
-- `_sources/src_<sha256>.source` 是结构化 `grow` 可选生成的不可变原文证据资产；它不参与普通浮现或索引，但不能从事件 Markdown 重新推导，备份时必须与桶共同保存。
+- `_sources/src_<sha256>.source` 是 `hold`、结构化 `grow` 或历史导入可生成的不可变原文证据资产；它不参与普通浮现或索引，但不能从事件 Markdown 重新推导，备份时必须与桶共同保存。
 - GitHub 同步会把 `_sources` 原文明文提交到已配置仓库。它不是端到端加密备份；生产上应使用可信私有仓库并审计协作者权限，绝不能把包含私密对话的 path prefix 放进公开仓库。
 - 本地导出的 ZIP 同样是未加密的敏感资产；应加密保管或放入可信存储，并在传输后清理不再需要的临时副本。
 - `embeddings.db`、BM25 缓存和脱水缓存都是可重建的派生数据。
@@ -71,7 +71,7 @@ python tools/check_buckets.py --json
 2. 准备一个全新的临时 vault/测试实例，不要直接覆盖唯一的生产目录。
 3. 在迁移页面上传 ZIP。新包应显示“备份清单与 SHA-256 校验通过”；无清单旧包会显示“未验证”，有原文引用但缺证据的 v2.10.0 包会显示兼容性警告。
 4. 检查 bucket 数、冲突决策和 embedding 模型/维度，再执行导入。
-5. 导入完成后运行 `python tools/check_buckets.py`，并用 `breath_search(query=...)` 抽查可检索性；若测试包含原文证据，检查 `<vault>/_sources/` 下的 `.source` 文件已随导入落盘（3.0.0 起没有回读工具，原文只能从磁盘核对）。
+5. 导入完成后运行 `python tools/check_buckets.py`，并用带日期的 `breath_advanced(catalog=True, ...)` 抽查事件时间定位；若结果标记 `source_available:true`，用精确 `bucket_id + title` 调 `source_read`，沿 `next_cursor` 分页到 0，并核对 `<vault>/_sources/` 下的 `.source` 文件已随导入落盘。
 6. 确认 outbox 待处理数最终回到 0。模型离线时允许保持 pending，但 Markdown 必须完整可读。
 
 导入冲突的语义：

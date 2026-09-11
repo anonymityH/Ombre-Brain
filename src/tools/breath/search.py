@@ -29,14 +29,14 @@ tools/breath/search.py — 有 query 的检索模式
 import asyncio
 import hashlib
 import random
-from datetime import datetime, time
 
 from ombrebrain.policy.surfacing import SurfacePolicyVM
 from .. import _runtime as rt
 from ..plan.core import is_letter_bucket
 from ombrebrain.storage.quote_store import quotes_from_metadata, render_quotes
 from ._verbatim import render_stored_bucket
-from utils import count_tokens_approx, parse_bool, parse_iso_datetime
+from utils import count_tokens_approx, parse_bool
+from ._chronology import bucket_in_date_range, chronology_label, parse_date_range
 
 _SURFACE_POLICY = SurfacePolicyVM.default()
 
@@ -68,10 +68,11 @@ def _is_archived(bucket: dict) -> bool:
 
 def _render_archived_hit(bucket: dict, footprint: str) -> tuple[str, int]:
     bucket_id = str(bucket.get("id") or "")
+    metadata = bucket.get("metadata", {}) or {}
     protected_mark = (
         "🛡️ [受保护记忆] "
         if parse_bool(
-            (bucket.get("metadata", {}) or {}).get("protected"),
+            metadata.get("protected"),
             default=False,
         )
         else ""
@@ -79,6 +80,7 @@ def _render_archived_hit(bucket: dict, footprint: str) -> tuple[str, int]:
     header = (
         f"{protected_mark}[query 命中·已删除到档案] [bucket_id:{bucket_id}] "
         "[状态:已退出日常记忆，原文仍保留]"
+        f"{_source_locator(metadata)}"
     )
     rendered, _ = render_stored_bucket(bucket, header, footprint)
     rendered += (
@@ -89,37 +91,19 @@ def _render_archived_hit(bucket: dict, footprint: str) -> tuple[str, int]:
     return rendered, count_tokens_approx(rendered)
 
 
-def _parse_date_bound(value: str, *, upper: bool) -> datetime | None:
-    """解析创建时间边界；YYYY-MM-DD 的上界包含当天全日。"""
-    raw = value.strip()
-    if not raw:
-        return None
-    parsed = parse_iso_datetime(raw)
-    if len(raw) == 10:
-        day = parsed.date()
-        return datetime.combine(day, time.max if upper else time.min)
-    return parsed
+def _source_locator(metadata: dict) -> str:
+    """Expose the exact values required for a subsequent source_read call."""
 
-
-def _bucket_in_created_range(
-    bucket: dict,
-    created_from: datetime | None,
-    created_to: datetime | None,
-) -> bool:
-    if created_from is None and created_to is None:
-        return True
-    raw_created = str(bucket.get("metadata", {}).get("created") or "").strip()
-    if not raw_created:
-        return False
-    try:
-        created = parse_iso_datetime(raw_created)
-    except (TypeError, ValueError):
-        return False
-    if created_from is not None and created < created_from:
-        return False
-    if created_to is not None and created > created_to:
-        return False
-    return True
+    if not (metadata.get("source_refs") or metadata.get("source_links")):
+        return ""
+    parts = ["[source_available:true]"]
+    title = " ".join(str(metadata.get("title") or "").split())
+    if title:
+        parts.append(f"[title:{title}]")
+    time_field, time_value = chronology_label(metadata)
+    if time_field and time_value:
+        parts.append(f"[{time_field}:{time_value}]")
+    return " " + " ".join(parts)
 
 
 async def _semantic_scores(query: str, top_k: int) -> tuple[dict[str, float], str]:
@@ -216,12 +200,11 @@ async def surface_search(
     q_valence = valence if 0 <= valence <= 1 else None
     q_arousal = arousal if 0 <= arousal <= 1 else None
     try:
-        created_from = _parse_date_bound(date_from, upper=False)
-        created_to = _parse_date_bound(date_to, upper=True)
-    except (TypeError, ValueError):
+        time_from, time_to = parse_date_range(date_from, date_to)
+    except (TypeError, ValueError, OverflowError) as exc:
+        if "date_from 不能晚于 date_to" in str(exc):
+            return "date_from 不能晚于 date_to。"
         return "日期格式无效，请使用 YYYY-MM-DD 或 ISO 8601 时间。"
-    if created_from and created_to and created_from > created_to:
-        return "date_from 不能晚于 date_to。"
 
     try:
         footprint_snapshot = rt.bucket_mgr.footprint_snapshot()
@@ -269,7 +252,7 @@ async def surface_search(
             is_archived
             and archived_original_kind not in ("feel", "plan", "letter")
             and _bucket_has_tags(meta, tag_filter)
-            and _bucket_in_created_range(exact_bucket, created_from, created_to)
+            and bucket_in_date_range(exact_bucket, time_from, time_to)
         ):
             rendered, entry_tokens = _render_archived_hit(
                 exact_bucket, _footprint(exact_bucket)
@@ -280,7 +263,7 @@ async def surface_search(
             and meta.get("type") not in ("feel", "plan", "letter")
             and _can_surface_search(exact_bucket)
             and _bucket_has_tags(meta, tag_filter)
-            and _bucket_in_created_range(exact_bucket, created_from, created_to)
+            and bucket_in_date_range(exact_bucket, time_from, time_to)
         ):
             protected_mark = (
                 "🛡️ [受保护记忆] "
@@ -290,7 +273,8 @@ async def surface_search(
             rendered, entry_tokens = render_stored_bucket(
                 exact_bucket,
                 f"{protected_mark}[exact_bucket_id:true] "
-                f"[bucket_id:{exact_bucket['id']}]",
+                f"[bucket_id:{exact_bucket['id']}]"
+                f"{_source_locator(meta)}",
                 _footprint(exact_bucket),
             )
             if entry_tokens > max_tokens:
@@ -353,7 +337,7 @@ async def surface_search(
     matches = [b for b in matches if _bucket_has_tags(b["metadata"], tag_filter)]
     matches = [
         b for b in matches
-        if _bucket_in_created_range(b, created_from, created_to)
+        if bucket_in_date_range(b, time_from, time_to)
     ]
     matches = matches[:max_results]
     rt.logger.info(
@@ -373,22 +357,31 @@ async def surface_search(
         if _is_archived(bucket):
             rendered, entry_tokens = _render_archived_hit(bucket, _footprint(bucket))
         elif parse_bool(meta.get("protected"), default=False):
-            header = f"🛡️ [受保护记忆] [bucket_id:{bucket_id}]"
+            header = (
+                f"🛡️ [受保护记忆] [bucket_id:{bucket_id}]"
+                f"{_source_locator(meta)}"
+            )
             rendered, entry_tokens = render_stored_bucket(
                 bucket, header, _footprint(bucket)
             )
         elif meta.get("pinned") or meta.get("type") == "permanent":
-            header = f"📌 [核心准则] [bucket_id:{bucket_id}]"
+            header = (
+                f"📌 [核心准则] [bucket_id:{bucket_id}]"
+                f"{_source_locator(meta)}"
+            )
             rendered, entry_tokens = render_stored_bucket(
                 bucket, header, _footprint(bucket)
             )
         elif bucket.get("vector_match"):
-            header = f"[语义关联] [bucket_id:{bucket_id}]"
+            header = (
+                f"[语义关联] [bucket_id:{bucket_id}]"
+                f"{_source_locator(meta)}"
+            )
             rendered, entry_tokens = render_stored_bucket(
                 bucket, header, _footprint(bucket)
             )
         else:
-            header = f"[bucket_id:{bucket_id}]"
+            header = f"[bucket_id:{bucket_id}]{_source_locator(meta)}"
             rendered, entry_tokens = render_stored_bucket(
                 bucket, header, _footprint(bucket)
             )
@@ -432,7 +425,7 @@ async def surface_search(
                     b["metadata"].get("protected"), default=False
                 )
                 and rt.decay_engine.calculate_score(b["metadata"]) < 2.0
-                and _bucket_in_created_range(b, created_from, created_to)
+                and bucket_in_date_range(b, time_from, time_to)
             ]
             remaining_slots = max(0, max_results - len(matches))
             if low_weight and remaining_slots:

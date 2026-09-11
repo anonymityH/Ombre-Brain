@@ -3,7 +3,7 @@
 import pytest
 
 from bucket_manager import BucketManager
-from import_memory import ImportEngine
+from import_memory import ImportEngine, _timestamp_text
 
 
 class _FakeBucketManager:
@@ -27,6 +27,10 @@ def _engine(tmp_path):
         _FakeDehydrator(),
     )
     return engine, manager
+
+
+def test_unix_export_timestamp_is_stored_as_explicit_utc():
+    assert _timestamp_text(0) == "1970-01-01T00:00:00+00:00"
 
 
 def test_parse_extraction_preserves_model_event_time_fields():

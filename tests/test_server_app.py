@@ -32,6 +32,7 @@ EXPECTED_PUBLIC_MCP_TOOLS = (
     "breath_advanced",
     "hold",
     "grow",
+    "source_read",
     "trace",
     "dream",
     "anchor",

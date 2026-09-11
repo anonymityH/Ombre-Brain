@@ -30,11 +30,12 @@ import math
 import re
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from errors import safe_error_detail
+from ombrebrain.storage.source_store import SourceStore
 from tools.plan.core import is_letter_bucket
 from utils import atomic_write_text, clean_llm_json, count_tokens_approx, now_iso, parse_bool
 
@@ -184,7 +185,10 @@ def _timestamp_text(value: object) -> str:
         return str(value)
     if isinstance(value, (int, float)):
         try:
-            return datetime.fromtimestamp(value).isoformat()
+            # ChatGPT exports Unix timestamps in UTC.  A host-local conversion
+            # followed by storing a naive string makes the same import move by
+            # hours when deployed on another machine.
+            return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
         except (OSError, OverflowError, ValueError):
             return ""
     return str(value or "")
@@ -940,11 +944,29 @@ class ImportEngine:
     将对话历史文件处理为 OB 记忆桶。
     """
 
-    def __init__(self, config: dict, bucket_mgr, dehydrator, embedding_engine=None):
+    def __init__(
+        self,
+        config: dict,
+        bucket_mgr,
+        dehydrator,
+        embedding_engine=None,
+        *,
+        source_store=None,
+    ):
         self.config = config
         self.bucket_mgr = bucket_mgr
         self.dehydrator = dehydrator
         self.embedding_engine = embedding_engine
+        source_limit = int(
+            (config.get("limits") or {}).get(
+                "max_grow_input_bytes", 2 * 1024 * 1024
+            )
+        )
+        self.source_store = (
+            source_store
+            if source_store is not None
+            else SourceStore(config["buckets_dir"], max_bytes=source_limit)
+        )
         self.state = ImportState(config["buckets_dir"])
         self._paused = False
         self._running = False
@@ -1244,11 +1266,26 @@ class ImportEngine:
                 type(exc).__name__,
             )
 
-    async def _create_import_bucket(self, item: dict) -> str:
+    async def _create_import_bucket(
+        self,
+        item: dict,
+        *,
+        source_refs: list[dict] | None = None,
+    ) -> str:
         """创建一条导入记忆；importance 只是普通评分字段，不设硬配额。"""
         requested_importance = item.get(
             "importance", _DEFAULT_IMPORTANCE
         )
+        title = str(item.get("name") or "").strip()
+        if not title:
+            title = next(
+                (
+                    line.strip()[:_NAME_MAX_CHARS]
+                    for line in str(item["content"]).splitlines()
+                    if line.strip()
+                ),
+                "导入记忆",
+            )
         return await self.bucket_mgr.create(
             content=item["content"],
             tags=item.get("tags", []),
@@ -1257,11 +1294,13 @@ class ImportEngine:
             valence=item.get("valence", _DEFAULT_VALENCE),
             arousal=item.get("arousal", _DEFAULT_AROUSAL),
             name=item.get("name") or None,
+            title=title,
             source_tool="import",
             event_actor="human",
             imported=True,
             event_time=item.get("event_time", ""),
             event_time_end=item.get("event_time_end", ""),
+            source_refs=source_refs,
         )
 
     async def _process_single_chunk(self, chunk: dict, preserve_raw: bool) -> bool:
@@ -1314,6 +1353,17 @@ class ImportEngine:
             if source_event_time_end and not item.get("event_time_end"):
                 item["event_time_end"] = source_event_time_end
 
+        # The evidence unit is the exact normalized transcript chunk that the
+        # extractor saw.  It is content-addressed once and shared by every
+        # memory extracted from this chunk.  Structured memory JSON is already
+        # authored memory data rather than a conversation transcript, so it
+        # deliberately keeps its existing no-evidence import path.
+        source_refs = None
+        if direct_item is None:
+            source_ref = self.source_store.put(content)
+            line_count = len(content.splitlines()) or 1
+            source_refs = [{"ref": source_ref, "ranges": [[1, line_count]]}]
+
         # --- 逐条保存提取出的记忆 ---
         chunk_ok = True
         for item in items:
@@ -1322,7 +1372,9 @@ class ImportEngine:
 
                 # 历史导入保留来源：不能因为语义检索相似就修改旧记忆。
                 # 仅按正文精确去重，确保崩溃续跑仍然幂等。
-                created = await self._create_import_item_if_new(item)
+                created = await self._create_import_item_if_new(
+                    item, source_refs=source_refs
+                )
                 if not created:
                     self.state.data["memories_skipped"] += 1
                     continue
@@ -1476,14 +1528,19 @@ class ImportEngine:
             )
         return validated
 
-    async def _create_import_item_if_new(self, item: dict) -> bool:
+    async def _create_import_item_if_new(
+        self,
+        item: dict,
+        *,
+        source_refs: list[dict] | None = None,
+    ) -> bool:
         """仅当不存在完全相同正文时创建导入桶。"""
 
         digest = self._content_digest(item["content"])
         if self._exact_content_hashes is not None:
             if digest in self._exact_content_hashes:
                 return False
-            await self._create_import_bucket(item)
+            await self._create_import_bucket(item, source_refs=source_refs)
             self._exact_content_hashes.add(digest)
             return True
 
@@ -1504,7 +1561,7 @@ class ImportEngine:
                     type(exc).__name__,
                 )
 
-        await self._create_import_bucket(item)
+        await self._create_import_bucket(item, source_refs=source_refs)
         return True
     async def detect_patterns(self) -> list[dict]:
         """
