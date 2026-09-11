@@ -433,8 +433,92 @@ def _parse_chatgpt_json(data: list | dict) -> list[dict]:
     return turns
 
 
+_BROWSER_MD_SOURCE_RE = re.compile(
+    r"^\s*>\s*From:\s*https://chatgpt\.com/",
+    re.IGNORECASE | re.MULTILINE,
+)
+_BROWSER_MD_ROLE_RE = re.compile(
+    r"^(User|GPT|ChatGPT):\s*$",
+    re.IGNORECASE,
+)
+_BROWSER_MD_TIME_RE = re.compile(
+    r"^message time:\s*"
+    r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _parse_browser_plugin_markdown(text: str) -> list[dict] | None:
+    """Parse the ChatGPT browser-export Markdown shape when detected.
+
+    The export uses standalone ``User:``/``GPT:`` markers and stores user
+    timestamps on a following ``message time:`` line. Assistant timestamps are
+    absent, so callers must preserve the nearest known bounds rather than
+    inventing them.
+    """
+
+    if not _BROWSER_MD_SOURCE_RE.search(text):
+        return None
+
+    turns: list[dict] = []
+    current_role: str | None = None
+    current_content: list[str] = []
+    current_timestamp = ""
+
+    def flush() -> None:
+        nonlocal current_content, current_timestamp
+        if current_role is None:
+            current_content = []
+            current_timestamp = ""
+            return
+
+        # The plugin puts a Markdown horizontal rule between messages. Remove
+        # it only when it is the final nonblank line before the next role, so
+        # horizontal rules used inside a response remain intact.
+        cleaned = list(current_content)
+        while cleaned and not cleaned[-1].strip():
+            cleaned.pop()
+        if cleaned and cleaned[-1].strip() == "---":
+            cleaned.pop()
+        content = "\n".join(cleaned).strip()
+        if content:
+            turns.append({
+                "role": current_role,
+                "content": content,
+                "timestamp": current_timestamp,
+            })
+        current_content = []
+        current_timestamp = ""
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        role_match = _BROWSER_MD_ROLE_RE.fullmatch(stripped)
+        if role_match:
+            flush()
+            current_role = (
+                "user" if role_match.group(1).lower() == "user" else "assistant"
+            )
+            continue
+        if current_role is None:
+            # Ignore the plugin's source URL and any export preamble.
+            continue
+        time_match = _BROWSER_MD_TIME_RE.fullmatch(stripped)
+        if time_match and not any(part.strip() for part in current_content):
+            current_timestamp = time_match.group(1)
+            continue
+        current_content.append(line)
+
+    flush()
+    return turns or None
+
+
 def _parse_markdown(text: str) -> list[dict]:
     """Parse Markdown/plain text → [{role, content, timestamp}, ...]"""
+    browser_export = _parse_browser_plugin_markdown(text)
+    if browser_export is not None:
+        return browser_export
+
     # Try to detect conversation patterns
     lines = text.split("\n")
     turns = []
@@ -645,9 +729,11 @@ def chunk_turns(turns: list[dict], target_tokens: int = _CHUNK_TARGET_TOKENS, hu
             turn_count = 0
             first_ts = ""
 
-        if not first_ts:
-            first_ts = turn.get("timestamp", "")
-        last_ts = turn.get("timestamp", "")
+        turn_ts = str(turn.get("timestamp") or "")
+        if not first_ts and turn_ts:
+            first_ts = turn_ts
+        if turn_ts:
+            last_ts = turn_ts
         current_lines.append(line)
         current_tokens += line_budget
         turn_count += 1

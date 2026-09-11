@@ -3,7 +3,12 @@
 import pytest
 
 from bucket_manager import BucketManager
-from import_memory import ImportEngine, _timestamp_text
+from import_memory import (
+    ImportEngine,
+    _timestamp_text,
+    chunk_turns,
+    detect_and_parse,
+)
 
 
 class _FakeBucketManager:
@@ -31,6 +36,61 @@ def _engine(tmp_path):
 
 def test_unix_export_timestamp_is_stored_as_explicit_utc():
     assert _timestamp_text(0) == "1970-01-01T00:00:00+00:00"
+
+
+def test_browser_plugin_markdown_preserves_roles_and_message_times():
+    raw = """> From: https://chatgpt.com/c/example
+
+GPT:
+
+没有时间的开场回复。
+
+---
+
+User:
+
+message time: 2026-09-11 16:19:23
+
+第一条用户消息。
+
+---
+
+GPT:
+
+第一条回复。
+
+---
+
+User:
+
+message time: 2026-09-11 16:21:08
+
+第二条用户消息。
+
+---
+
+GPT:
+
+第二条回复。
+"""
+
+    turns = detect_and_parse(raw, "browser-export.md")
+
+    assert [turn["role"] for turn in turns] == [
+        "assistant", "user", "assistant", "user", "assistant"
+    ]
+    assert [turn["timestamp"] for turn in turns] == [
+        "", "2026-09-11 16:19:23", "", "2026-09-11 16:21:08", ""
+    ]
+    assert turns[0]["content"] == "没有时间的开场回复。"
+    assert turns[-1]["content"] == "第二条回复。"
+    assert all("message time:" not in turn["content"] for turn in turns)
+    assert all("> From:" not in turn["content"] for turn in turns)
+    assert all("---" not in turn["content"] for turn in turns)
+
+    chunks = chunk_turns(turns, human_label="测试用户")
+    assert chunks[0]["timestamp_start"] == "2026-09-11 16:19:23"
+    assert chunks[0]["timestamp_end"] == "2026-09-11 16:21:08"
 
 
 def test_parse_extraction_preserves_model_event_time_fields():
