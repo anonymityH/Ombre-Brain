@@ -43,6 +43,31 @@ async def test_source_read_requires_exact_title_and_respects_scope(
 
 
 @pytest.mark.asyncio
+async def test_source_read_labels_disjoint_event_fragments(
+    bucket_mgr,
+    monkeypatch,
+):
+    store = SourceStore(bucket_mgr.base_dir)
+    source = "第一段证据\n无关过渡\n第二段证据一\n第二段证据二\n结尾\n"
+    ref = store.put(source)
+    bucket_id = await bucket_mgr.create(
+        content="由两段不连续原文支持的记忆。",
+        title="分段证据",
+        source_refs=[{"ref": ref, "ranges": [[1, 1], [3, 4]]}],
+    )
+    monkeypatch.setattr(rt, "bucket_mgr", bucket_mgr, raising=False)
+    monkeypatch.setattr(rt, "source_store", store, raising=False)
+
+    result = await source_read(bucket_id, "分段证据")
+
+    assert "source_ranges=1-1,3-4" in result
+    assert "[证据片段 1/2 · 原文行 1-1]" in result
+    assert "[证据片段 2/2 · 原文行 3-4]" in result
+    assert result.index("第一段证据") < result.index("第二段证据一")
+    assert "无关过渡" not in result and "结尾" not in result
+
+
+@pytest.mark.asyncio
 async def test_source_read_rejects_malformed_ref_before_store_access(monkeypatch):
     class Manager:
         async def get(self, _bucket_id):

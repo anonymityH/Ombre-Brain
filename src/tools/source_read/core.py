@@ -58,6 +58,12 @@ def _collect_evidence_window(
     total_chars = 0
     emitted_chunks = 0
     seen_full_sources: set[str] = set()
+    event_fragment_count = (
+        sum(len(source_ref["ranges"]) for source_ref in source_refs)
+        if scope == "event"
+        else 0
+    )
+    event_fragment_index = 0
 
     def append_segment(segment: str) -> None:
         nonlocal total_chars
@@ -83,7 +89,20 @@ def _collect_evidence_window(
 
         content = source_store.read(ref)
         if scope == "event":
-            content = source_store.select_ranges(content, source_ref["ranges"])
+            for start, finish in source_ref["ranges"]:
+                event_fragment_index += 1
+                if emitted_chunks:
+                    append_segment("\n\n")
+                if event_fragment_count > 1:
+                    append_segment(
+                        f"[证据片段 {event_fragment_index}/{event_fragment_count}"
+                        f" · 原文行 {start}-{finish}]\n"
+                    )
+                append_segment(
+                    source_store.select_ranges(content, [[start, finish]])
+                )
+                emitted_chunks += 1
+            continue
         if emitted_chunks:
             append_segment("\n\n")
         append_segment(content)

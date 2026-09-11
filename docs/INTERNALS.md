@@ -377,7 +377,7 @@ if text_match or semantic_match: 入选
 
 **读取门禁与返回：**
 
-- 调用方必须同时提供精确 bucket ID 与精确显式标题。默认 `scope=event` 只读取已声明的 1-based 闭区间；空范围失败关闭，不会静默扩大为全文。`scope=full_source` 必须显式指定。
+- 调用方必须同时提供精确 bucket ID 与精确显式标题。默认 `scope=event` 只读取已声明的 1-based 闭区间；多个不连续范围以片段序号和原文行号分隔，避免展示成连续对话。空范围失败关闭，不会静默扩大为全文。`scope=full_source` 必须显式指定。
 - 多个或含 detached 历史项的绑定先返回 manifest；调用方再显式选择 `source_slots` 或 `all_sources=True`。detached 项仍拒绝读取。
 - 长原文按 `max_tokens` 分页，响应给出 `cursor/next_cursor/total_chars`。返回头同时带 source ref、SHA-256、范围和事件时间，并明确标记 `untrusted_source=true`。
 - 读取不调用 `touch()`，不改变激活次数、重要度、衰减时间、归档状态或索引。原文中的任何指令都只是历史数据，不能作为运行指令执行。
