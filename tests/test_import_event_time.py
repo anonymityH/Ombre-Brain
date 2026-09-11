@@ -91,6 +91,13 @@ GPT:
     chunks = chunk_turns(turns, human_label="测试用户")
     assert chunks[0]["timestamp_start"] == "2026-09-11 16:19:23"
     assert chunks[0]["timestamp_end"] == "2026-09-11 16:21:08"
+    assert chunks[0]["turn_manifest"] == [
+        {"turn": 1, "role": "assistant", "timestamp": "", "start_line": 1, "end_line": 1},
+        {"turn": 2, "role": "user", "timestamp": "2026-09-11 16:19:23", "start_line": 2, "end_line": 2},
+        {"turn": 3, "role": "assistant", "timestamp": "", "start_line": 3, "end_line": 3},
+        {"turn": 4, "role": "user", "timestamp": "2026-09-11 16:21:08", "start_line": 4, "end_line": 4},
+        {"turn": 5, "role": "assistant", "timestamp": "", "start_line": 5, "end_line": 5},
+    ]
 
 
 def test_parse_extraction_preserves_model_event_time_fields():
@@ -106,6 +113,78 @@ def test_parse_extraction_preserves_model_event_time_fields():
 
     assert item["event_time"] == "2026-08-22T10:00:00+08:00"
     assert item["event_time_end"] == "2026-08-22T10:05:00+08:00"
+
+
+def test_parse_extraction_preserves_valid_source_turn_selection():
+    raw = """[
+      {
+        "content": "测试用户在不同轮次确认了一件重要的事。",
+        "source_turns": [5, 2, 5, 0, "3", true, "bad"]
+      }
+    ]"""
+
+    item = ImportEngine._parse_extraction(raw)[0]
+
+    assert item["source_turns"] == [2, 3, 5]
+
+
+@pytest.mark.asyncio
+async def test_selected_turns_narrow_source_ranges_and_event_time(
+    tmp_path,
+    monkeypatch,
+):
+    engine, manager = _engine(tmp_path)
+    transcript = "\n".join([
+        "[AI] 开场",
+        "[测试用户] 第一件事",
+        "第一件事的补充",
+        "[AI] 第一件事的回应",
+        "[测试用户] 第二件事",
+        "[AI] 第二件事的回应",
+    ])
+    manifest = [
+        {"turn": 1, "role": "assistant", "timestamp": "", "start_line": 1, "end_line": 1},
+        {"turn": 2, "role": "user", "timestamp": "2026-08-22T10:00:00+08:00", "start_line": 2, "end_line": 3},
+        {"turn": 3, "role": "assistant", "timestamp": "", "start_line": 4, "end_line": 4},
+        {"turn": 4, "role": "user", "timestamp": "2026-08-22T10:20:00+08:00", "start_line": 5, "end_line": 5},
+        {"turn": 5, "role": "assistant", "timestamp": "", "start_line": 6, "end_line": 6},
+    ]
+
+    async def fake_extract(content, **kwargs):
+        assert content == transcript
+        assert kwargs["turn_manifest"] == manifest
+        return [
+            {"content": "第一件事形成了独立记忆。", "source_turns": [2, 3]},
+            {"content": "第二件事形成了另一条记忆。", "source_turns": [4, 5]},
+        ]
+
+    monkeypatch.setattr(engine, "_extract_memories", fake_extract)
+    monkeypatch.setattr(
+        engine,
+        "_create_import_item_if_new",
+        engine._create_import_bucket,
+    )
+
+    ok = await engine._process_single_chunk(
+        {
+            "content": transcript,
+            "timestamp_start": "2026-08-22T10:00:00+08:00",
+            "timestamp_end": "2026-08-22T10:20:00+08:00",
+            "turn_count": 5,
+            "turn_manifest": manifest,
+        },
+        preserve_raw=False,
+    )
+
+    assert ok is True
+    first, second = manager.created
+    assert first["source_refs"][0]["ranges"] == [[2, 4]]
+    assert first["event_time"] == "2026-08-22T10:00:00+08:00"
+    assert first["event_time_end"] == "2026-08-22T10:00:00+08:00"
+    assert second["source_refs"][0]["ranges"] == [[5, 6]]
+    assert second["event_time"] == "2026-08-22T10:20:00+08:00"
+    assert second["event_time_end"] == "2026-08-22T10:20:00+08:00"
+    assert first["source_refs"][0]["ref"] == second["source_refs"][0]["ref"]
 
 
 @pytest.mark.asyncio

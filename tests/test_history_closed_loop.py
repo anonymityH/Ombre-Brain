@@ -50,7 +50,7 @@ async def test_conversation_import_persists_event_time_title_and_source_evidence
         "[测试用户] 这个决定发生在正式上线之前。"
     )
 
-    async def extract(_content):
+    async def extract(_content, **_kwargs):
         return [{
             "name": "",
             "content": "迁移先于上线。",
@@ -159,6 +159,7 @@ async def test_date_filtered_catalog_is_a_source_read_locator(
     assert f"[bucket_id:{historical_id}]" in result
     assert "[title:迁移时间线]" in result
     assert "[event_time:2026-08-20T21:00:00+08:00]" in result
+    assert "[event_time_end:2026-08-20T21:05:00+08:00]" in result
     assert "历史正文不会出现在目录" not in result
 
 
@@ -289,13 +290,15 @@ async def test_chatgpt_import_to_dated_catalog_to_source_read_closed_loop(
         ]
     }, ensure_ascii=False)
 
-    async def extract(_content):
+    async def extract(_content, **kwargs):
+        assert [entry["turn"] for entry in kwargs["turn_manifest"]] == [1, 2]
         return [{
             "name": "迁移时间线",
             "content": "迁移决定发生在正式上线之前。",
             "domain": ["回忆"],
             "tags": ["时间线"],
             "importance": 8,
+            "source_turns": [1, 2],
         }]
 
     monkeypatch.setattr(engine, "_extract_memories", extract)

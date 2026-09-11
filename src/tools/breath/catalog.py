@@ -125,6 +125,9 @@ async def surface_catalog(
             time_field, time_value = chronology_label(meta)
             if time_field and time_value:
                 line += f" [{time_field}:{time_value}]"
+                event_end = str(meta.get("event_time_end") or "").strip()
+                if time_field == "event_time" and event_end and event_end != time_value:
+                    line += f" [event_time_end:{event_end}]"
         if not letter_locked:
             hint = relation_hint(b)
             if hint:

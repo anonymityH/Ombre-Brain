@@ -665,7 +665,9 @@ def _split_oversized_turn(
 def chunk_turns(turns: list[dict], target_tokens: int = _CHUNK_TARGET_TOKENS, human_label: str = "用户") -> list[dict]:
     """
     按对话轮次边界将对话分为 ~target_tokens 大小的窗口。
-    返回 {content, timestamp_start, timestamp_end, turn_count} 列表。
+    返回 {content, timestamp_start, timestamp_end, turn_count, turn_manifest} 列表。
+    turn_manifest 记录每轮在规范化 chunk 中的 1-based 行范围与已知来源时间，
+    供提取器把每条记忆精确绑定回支持它的轮次；它不改变 content 原文。
     human_label：对话中「用户」那一侧的称呼，默认「用户」，可传入 config["human"] 使内容更个人化。
     """
     if target_tokens <= 0:
@@ -677,6 +679,28 @@ def chunk_turns(turns: list[dict], target_tokens: int = _CHUNK_TARGET_TOKENS, hu
     first_ts = ""
     last_ts = ""
     turn_count = 0
+    current_manifest: list[dict] = []
+    current_line_count = 0
+
+    def flush_current() -> None:
+        nonlocal current_lines, current_tokens, first_ts, last_ts
+        nonlocal turn_count, current_manifest, current_line_count
+        if not current_lines:
+            return
+        chunks.append({
+            "content": "\n".join(current_lines),
+            "timestamp_start": first_ts,
+            "timestamp_end": last_ts,
+            "turn_count": turn_count,
+            "turn_manifest": current_manifest,
+        })
+        current_lines = []
+        current_tokens = 0
+        first_ts = ""
+        last_ts = ""
+        turn_count = 0
+        current_manifest = []
+        current_line_count = 0
 
     for turn in turns:
         role_label = human_label if turn["role"] in ("user", "human") else "AI"
@@ -692,59 +716,52 @@ def chunk_turns(turns: list[dict], target_tokens: int = _CHUNK_TARGET_TOKENS, hu
         # 否则整段塞入单个分块会迫使后续流程静默截断。
         if line_tokens > target_tokens:
             # Flush current
-            if current_lines:
-                chunks.append({
-                    "content": "\n".join(current_lines),
-                    "timestamp_start": first_ts,
-                    "timestamp_end": last_ts,
-                    "turn_count": turn_count,
-                })
-                current_lines = []
-                current_tokens = 0
-                turn_count = 0
-                first_ts = ""
+            flush_current()
 
             for part in _split_oversized_turn(
                 turn_content,
                 line_prefix=line_prefix,
                 target_tokens=target_tokens,
             ):
+                part_line_count = len(part.splitlines()) or 1
                 chunks.append({
                     "content": part,
                     "timestamp_start": turn.get("timestamp", ""),
                     "timestamp_end": turn.get("timestamp", ""),
                     "turn_count": 1,
+                    "turn_manifest": [{
+                        "turn": 1,
+                        "role": str(turn.get("role") or "assistant"),
+                        "timestamp": str(turn.get("timestamp") or ""),
+                        "start_line": 1,
+                        "end_line": part_line_count,
+                    }],
                 })
             continue
 
         if current_tokens + line_budget > target_tokens and current_lines:
-            chunks.append({
-                "content": "\n".join(current_lines),
-                "timestamp_start": first_ts,
-                "timestamp_end": last_ts,
-                "turn_count": turn_count,
-            })
-            current_lines = []
-            current_tokens = 0
-            turn_count = 0
-            first_ts = ""
+            flush_current()
 
         turn_ts = str(turn.get("timestamp") or "")
         if not first_ts and turn_ts:
             first_ts = turn_ts
         if turn_ts:
             last_ts = turn_ts
+        line_count = len(line.splitlines()) or 1
+        start_line = current_line_count + 1
+        current_manifest.append({
+            "turn": turn_count + 1,
+            "role": str(turn.get("role") or "assistant"),
+            "timestamp": turn_ts,
+            "start_line": start_line,
+            "end_line": start_line + line_count - 1,
+        })
         current_lines.append(line)
+        current_line_count += line_count
         current_tokens += line_budget
         turn_count += 1
 
-    if current_lines:
-        chunks.append({
-            "content": "\n".join(current_lines),
-            "timestamp_start": first_ts,
-            "timestamp_end": last_ts,
-            "turn_count": turn_count,
-        })
+    flush_current()
 
     return chunks
 
@@ -986,6 +1003,9 @@ IMPORT_EXTRACT_PROMPT = """你是一个对话记忆提取专家。从以下对�
 6. 每条记忆不少于30字
 7. 当前对话片段的条目数控制在 0~5 个（没有值得记的就返回空数组；不同具体事件不要为了压缩条数而强行合并）
 8. 在 content 中对人名、地名、专有名词用 [[双链]] 标记
+9. 每条记忆必须给出 source_turns：只列出直接支持该记忆的 1-based 对话轮次号。
+   轮次号必须来自 data_record.turn_manifest；不要为了补齐范围而选择无关轮次，
+   也不要填写行号、时间戳或不存在的轮次号
 
 输出格式（纯 JSON 数组，无其他内容）：
 [
@@ -998,7 +1018,8 @@ IMPORT_EXTRACT_PROMPT = """你是一个对话记忆提取专家。从以下对�
     "tags": ["核心词1", "核心词2", "扩展词1"],
     "importance": 5,
     "preserve_raw": false,
-    "is_pattern": false
+    "is_pattern": false,
+    "source_turns": [2, 3]
   }
 ]
 
@@ -1017,6 +1038,115 @@ valence: 0~1（0=消极, 0.5=中性, 1=积极）
 arousal: 0~1（0=平静, 0.5=普通, 1=激动）
 preserve_raw: true = 特殊情境/暗号/仪式，保留原文不摘要
 is_pattern: true = 反复出现的习惯性行为模式"""
+
+
+def _validated_source_turns(value: object) -> list[int]:
+    """Normalize model-selected 1-based turn numbers without guessing."""
+
+    if not isinstance(value, list):
+        return []
+    selected: list[int] = []
+    for raw in value:
+        if isinstance(raw, bool):
+            continue
+        try:
+            turn = int(raw)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if turn < 1 or turn in selected:
+            continue
+        selected.append(turn)
+        if len(selected) >= 64:
+            break
+    return sorted(selected)
+
+
+def _merge_line_ranges(ranges: list[list[int]]) -> list[list[int]]:
+    """Merge overlapping/adjacent validated source line ranges."""
+
+    merged: list[list[int]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
+
+
+def _item_source_window(
+    item: dict,
+    turn_manifest: list[dict],
+    *,
+    line_count: int,
+    chunk_start: str,
+    chunk_end: str,
+) -> tuple[list[list[int]], str, str]:
+    """Resolve one extracted memory to deterministic evidence lines and time.
+
+    The model may select turns, but cannot author line numbers or timestamps.
+    Invalid/missing selections fall back to the honest chunk-wide interval.
+    """
+
+    by_turn = {
+        int(entry.get("turn")): entry
+        for entry in turn_manifest
+        if isinstance(entry, dict)
+        and isinstance(entry.get("turn"), int)
+        and not isinstance(entry.get("turn"), bool)
+    }
+    selected = [
+        by_turn[turn]
+        for turn in _validated_source_turns(item.get("source_turns"))
+        if turn in by_turn
+    ]
+    if not selected:
+        return [[1, max(1, line_count)]], chunk_start, chunk_end
+
+    ranges: list[list[int]] = []
+    for entry in selected:
+        try:
+            start = int(entry.get("start_line"))
+            end = int(entry.get("end_line"))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if 1 <= start <= end <= max(1, line_count):
+            ranges.append([start, end])
+    if not ranges:
+        return [[1, max(1, line_count)]], chunk_start, chunk_end
+
+    selected_turns = {int(entry["turn"]) for entry in selected}
+    first_turn = min(selected_turns)
+    last_turn = max(selected_turns)
+    ordered = sorted(by_turn.values(), key=lambda entry: int(entry["turn"]))
+
+    selected_times = [
+        str(entry.get("timestamp") or "").strip()
+        for entry in selected
+        if str(entry.get("timestamp") or "").strip()
+    ]
+    if selected_times:
+        event_start = selected_times[0]
+        event_end = selected_times[-1]
+    else:
+        # Some exports omit assistant timestamps. Keep a bounded provenance
+        # window from neighboring known turns instead of asking the model to
+        # invent a time.
+        before = [
+            str(entry.get("timestamp") or "").strip()
+            for entry in ordered
+            if int(entry["turn"]) <= first_turn
+            and str(entry.get("timestamp") or "").strip()
+        ]
+        after = [
+            str(entry.get("timestamp") or "").strip()
+            for entry in ordered
+            if int(entry["turn"]) >= last_turn
+            and str(entry.get("timestamp") or "").strip()
+        ]
+        event_start = before[-1] if before else (after[0] if after else chunk_start)
+        event_end = after[0] if after else (before[-1] if before else chunk_end)
+
+    return _merge_line_ranges(ranges), event_start, event_end
 
 
 # ============================================================
@@ -1407,7 +1537,10 @@ class ImportEngine:
         # --- LLM extraction ---
         if items is None:
             try:
-                items = await self._extract_memories(content)
+                items = await self._extract_memories(
+                    content,
+                    turn_manifest=chunk.get("turn_manifest") or [],
+                )
                 self.state.data["api_calls"] += 1
             except Exception as e:
                 err_msg = (
@@ -1433,28 +1566,43 @@ class ImportEngine:
         # has no timestamp, leave the field empty rather than inventing one.
         source_event_time = str(chunk.get("timestamp_start") or "").strip()
         source_event_time_end = str(chunk.get("timestamp_end") or "").strip()
-        for item in items:
-            if source_event_time and not item.get("event_time"):
-                item["event_time"] = source_event_time
-            if source_event_time_end and not item.get("event_time_end"):
-                item["event_time_end"] = source_event_time_end
 
         # The evidence unit is the exact normalized transcript chunk that the
         # extractor saw.  It is content-addressed once and shared by every
         # memory extracted from this chunk.  Structured memory JSON is already
         # authored memory data rather than a conversation transcript, so it
         # deliberately keeps its existing no-evidence import path.
-        source_refs = None
+        source_ref = None
+        line_count = len(content.splitlines()) or 1
         if direct_item is None:
             source_ref = self.source_store.put(content)
-            line_count = len(content.splitlines()) or 1
-            source_refs = [{"ref": source_ref, "ranges": [[1, line_count]]}]
 
         # --- 逐条保存提取出的记忆 ---
         chunk_ok = True
         for item in items:
             try:
                 should_preserve = preserve_raw or item.get("preserve_raw", False)
+                source_refs = None
+                if source_ref is not None:
+                    ranges, item_start, item_end = _item_source_window(
+                        item,
+                        chunk.get("turn_manifest") or [],
+                        line_count=line_count,
+                        chunk_start=source_event_time,
+                        chunk_end=source_event_time_end,
+                    )
+                    source_refs = [{"ref": source_ref, "ranges": ranges}]
+                    # Source-selected chronology is deterministic provenance;
+                    # do not accept a model-authored timestamp when a known
+                    # turn or chunk window is available.
+                    if item_start:
+                        item["event_time"] = item_start
+                    elif source_event_time and not item.get("event_time"):
+                        item["event_time"] = source_event_time
+                    if item_end:
+                        item["event_time_end"] = item_end
+                    elif source_event_time_end and not item.get("event_time_end"):
+                        item["event_time_end"] = source_event_time_end
 
                 # 历史导入保留来源：不能因为语义检索相似就修改旧记忆。
                 # 仅按正文精确去重，确保崩溃续跑仍然幂等。
@@ -1482,7 +1630,12 @@ class ImportEngine:
                     self.state.data["errors"].append(err_msg[:_CHUNK_ERR_PREVIEW])
         return chunk_ok
 
-    async def _extract_memories(self, chunk_content: str) -> list[dict]:
+    async def _extract_memories(
+        self,
+        chunk_content: str,
+        *,
+        turn_manifest: list[dict] | None = None,
+    ) -> list[dict]:
         """Use LLM to extract memories from a conversation chunk."""
         if not self.dehydrator.api_available:
             raise RuntimeError("API not available")
@@ -1510,6 +1663,7 @@ class ImportEngine:
                 "content_sha256": hashlib.sha256(
                     chunk_content.encode("utf-8")
                 ).hexdigest(),
+                "turn_manifest": turn_manifest or [],
                 "content": chunk_content,
             },
             ensure_ascii=False,
@@ -1604,6 +1758,9 @@ class ImportEngine:
                 ),
                 "event_time": str(item.get("event_time") or "").strip(),
                 "event_time_end": str(item.get("event_time_end") or "").strip(),
+                "source_turns": _validated_source_turns(
+                    item.get("source_turns")
+                ),
             })
 
         if truncated:

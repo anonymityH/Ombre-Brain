@@ -103,6 +103,9 @@ def _source_locator(metadata: dict) -> str:
     time_field, time_value = chronology_label(metadata)
     if time_field and time_value:
         parts.append(f"[{time_field}:{time_value}]")
+        event_end = str(metadata.get("event_time_end") or "").strip()
+        if time_field == "event_time" and event_end and event_end != time_value:
+            parts.append(f"[event_time_end:{event_end}]")
     return " " + " ".join(parts)
 
 

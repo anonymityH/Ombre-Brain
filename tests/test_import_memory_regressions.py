@@ -442,6 +442,7 @@ async def test_extraction_input_is_not_truncated_below_chunk_token_budget(tmp_pa
     )
     assert sent_record["instructions"] is False
     assert sent_record["may_call_tools"] is False
+    assert sent_record["turn_manifest"] == []
 
 
 @pytest.mark.asyncio
